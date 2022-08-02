@@ -19,10 +19,14 @@ def normalize_rule_name(match: str) -> str:
     """
 
     parts = match.split("_")
-    for ignore_pattern in ["g\\d+", "w\\d+", "a\\d+", "auto"]:
-        if re.match(ignore_pattern, parts[-1]):
-            return "_".join(parts[:-1])
-    return match
+    return next(
+        (
+            "_".join(parts[:-1])
+            for ignore_pattern in ["g\\d+", "w\\d+", "a\\d+", "auto"]
+            if re.match(ignore_pattern, parts[-1])
+        ),
+        match,
+    )
 
 
 class YaraHandler:
@@ -38,22 +42,22 @@ class YaraHandler:
 
         for root, _, f_names in os.walk(yara_path):
             # Recursively collect paths for yara rules in the folder
-            for f in f_names:
-                # Ignore non Yara files based on extension
-                if not f.endswith(".yar") and not f.endswith(".yara"):
-                    continue
-                rule_paths.append(os.path.join(root, f))
+            rule_paths.extend(
+                os.path.join(root, f)
+                for f in f_names
+                if f.endswith(".yar") or f.endswith(".yara")
+            )
 
         if not rule_paths:
             raise RuntimeError("The yara rule directory is empty")
 
         # Convert the list to a dict {"0": "rules/rule1.yar", "1": "rules/folder/rul...
-        rules_dict = {str(i): rule_paths[i] for i in range(0, len(rule_paths))}
+        rules_dict = {str(i): rule_paths[i] for i in range(len(rule_paths))}
 
         log.info("Compiling Yara rules. This might take a few moments...")
         # Hold yara.Rules object with the compiled rules
         self.rules = yara.compile(filepaths=rules_dict)
-        log.info("Loaded {} yara rules".format(len(rule_paths)))
+        log.info(f"Loaded {len(rule_paths)} yara rules")
 
     def get_matches(self, content) -> yara.Rules:
         """Use the compiled Yara rules and scan them against a sample
@@ -105,10 +109,7 @@ class YaraMatcher(Karton):
     def scan_sample(self, sample: bytes) -> List[str]:
         # Get all matches for this sample
         matches = self.yara_handler.get_matches(sample)
-        rule_names = []
-        for match in matches:
-            rule_names.append("yara:{}".format(normalize_rule_name(match.rule)))
-        return rule_names
+        return [f"yara:{normalize_rule_name(match.rule)}" for match in matches]
 
     def process_cuckoo(self, task: Task) -> List[str]:
         yara_matches: List[str] = []
